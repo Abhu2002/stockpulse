@@ -38,6 +38,7 @@ class AuthProfileChanged extends AuthEvent {
   List<Object?> get props => [profile];
 }
 
+//State
 enum AuthStatus { unknown, authenticated, unauthenticated, loading, failure }
 
 class AuthState extends Equatable {
