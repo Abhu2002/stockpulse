@@ -153,25 +153,6 @@ Run on a connected device or simulator:
 flutter run
 ```
 
-## Quality Checks
-
-Analyze the project:
-
-```bash
-flutter analyze
-```
-
-Run tests:
-
-```bash
-flutter test
-```
-
-Build web:
-
-```bash
-flutter build web
-```
 
 ## Assignment Coverage
 
