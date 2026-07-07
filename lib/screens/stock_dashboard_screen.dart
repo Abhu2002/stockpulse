@@ -50,8 +50,51 @@ class _StockDashboardScreenState extends State<StockDashboardScreen> {
             return const Center(child: CircularProgressIndicator());
           }
           if (state.status == StockStatus.failure) {
+            final isNetworkError =
+                state.errorMessage?.toLowerCase().contains(
+                  'network unavailable',
+                ) ==
+                true;
             return Center(
-              child: Text(state.errorMessage ?? 'No stock data available.'),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 28),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      isNetworkError ? Icons.wifi_off : Icons.error_outline,
+                      size: 72,
+                      color: const Color(0xFF334E68),
+                    ),
+                    const SizedBox(height: 20),
+                    Text(
+                      isNetworkError
+                          ? 'Network unavailable'
+                          : 'Unable to load market data',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(
+                            fontWeight: FontWeight.w900,
+                            color: const Color(0xFF102A43),
+                          ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      state.errorMessage ??
+                          'Please try again when your connection is restored.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: 20),
+                    FilledButton(
+                      onPressed: () => context.read<StockBloc>().add(
+                        const StocksRequested(),
+                      ),
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              ),
             );
           }
           if (state.stocks.isEmpty && state.indices.isEmpty) {

@@ -87,6 +87,18 @@ class StockBloc extends Bloc<StockEvent, StockState> {
   ) async {
     emit(state.copyWith(status: StockStatus.loading, errorMessage: null));
     try {
+      final networkAvailable = await _stockService.isNetworkAvailable();
+      if (!networkAvailable) {
+        emit(
+          const StockState(
+            status: StockStatus.failure,
+            errorMessage:
+                'Network unavailable. Please check your internet connection.',
+          ),
+        );
+        return;
+      }
+
       final results = await Future.wait([
         _stockService.fetchIndices(),
         _stockService.fetchStocks(),
@@ -99,7 +111,7 @@ class StockBloc extends Bloc<StockEvent, StockState> {
           status: StockStatus.success,
           indices: indices,
           stocks: stocks,
-          liveConnected: true,
+          liveConnected: false,
         ),
       );
 

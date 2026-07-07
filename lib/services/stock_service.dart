@@ -1,6 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+// 'dart:io' avoided to keep WebSocket support cross-platform via web_socket_channel
+
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/stock.dart';
 import '../models/stock_index.dart';
@@ -16,32 +20,107 @@ class StockService {
     return _stockData.map(Stock.fromJson).toList();
   }
 
+  Future<bool> isNetworkAvailable() async {
+    final connectivityResult = await Connectivity().checkConnectivity();
+    return connectivityResult != ConnectivityResult.none;
+  }
+
   Stream<StockIndex> liveIndexUpdates(List<StockIndex> currentIndices) async* {
-    WebSocket? socket;
+    // Use `web_socket_channel` for cross-platform support (web + mobile).
+
+    WebSocketChannel? channel;
+    final endpoints = ['wss://streamer.ysil.in/freefeed'];
+    Exception? lastError;
+
+    for (final url in endpoints) {
+      try {
+        if (kDebugMode) {
+          print('LIVE: Attempting WebSocketChannel connection to $url');
+        }
+        channel = WebSocketChannel.connect(Uri.parse(url));
+        if (kDebugMode) {
+          print('LIVE: WebSocketChannel connected to $url');
+        }
+        break;
+      } catch (e) {
+        lastError = e is Exception ? e : Exception(e.toString());
+        if (kDebugMode) {
+          print('LIVE: Connection to $url failed: $e');
+        }
+        channel = null;
+      }
+    }
+
+    if (channel == null) {
+      if (kDebugMode) {
+        print(
+          'LIVE: All WebSocket connection attempts failed. Last error: $lastError',
+        );
+      }
+      yield* _simulatedUpdates(currentIndices);
+      return;
+    }
+
     try {
-      socket = await WebSocket.connect(
-        'wss://streamer.ysil.in/',
-      ).timeout(const Duration(seconds: 6));
+      // Prefer subscribing to key indices; include 26060 as requested.
+      const preferredFeeds = {'NSEIDX_26000', 'NSEIDX_26060'};
       final symbols = currentIndices
-          .where((index) => index.feedSymbol == 'NSEIDX_26000')
+          .where((index) => preferredFeeds.contains(index.feedSymbol))
           .map((index) => index.feedSymbol)
           .toList();
-      socket.add(
+      // If no preferred symbols found, fall back to subscribing to 26060 specifically.
+      final subs = symbols.isEmpty ? ['NSEIDX_26060'] : symbols;
+      if (kDebugMode) {
+        print('LIVE: Subscribing to symbols: $subs');
+      }
+
+      channel.sink.add(
         jsonEncode({
           'action': 'subscribe',
           'type': 'freefeed',
-          'symbols': symbols.isEmpty ? ['NSEIDX_26000'] : symbols,
+          'symbols': subs,
         }),
       );
 
-      await for (final message in socket) {
-        final update = _parseIndexUpdate(message.toString(), currentIndices);
-        if (update != null) yield update;
+      var receivedAny = false;
+      await for (final message in channel.stream) {
+        try {
+          final update = _parseIndexUpdate(message.toString(), currentIndices);
+          if (update != null) {
+            receivedAny = true;
+            if (kDebugMode) {
+              print(
+                'LIVE: Received update for ${update.symbol} — price=${update.lastPrice} change=${update.change} chg%=${update.changePercent}',
+              );
+            }
+            yield update;
+          } else {
+            if (kDebugMode) {
+              print('LIVE: Received non-index message: ${message.toString()}');
+            }
+          }
+        } catch (e) {
+          if (kDebugMode) {
+            print('LIVE: Failed to parse message: $e');
+          }
+        }
       }
-    } catch (_) {
+
+      if (!receivedAny) {
+        if (kDebugMode) {
+          print(
+            'LIVE: Connected but no index messages received — falling back',
+          );
+        }
+        yield* _simulatedUpdates(currentIndices);
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('LIVE: WebSocketChannel error during listen: $e');
+      }
       yield* _simulatedUpdates(currentIndices);
     } finally {
-      await socket?.close();
+      channel.sink.close();
     }
   }
 
@@ -53,10 +132,18 @@ class StockService {
       final swing = tick.isEven ? 6.25 : -4.75;
       final nextPrice = base.lastPrice + swing;
       final change = nextPrice - base.close;
+      final changePercent = base.close == 0
+          ? 0.0
+          : (change / base.close) * 100.0;
+      if (kDebugMode) {
+        print(
+          'SIMULATED: ${base.symbol} → price=${nextPrice.toStringAsFixed(2)} change=${change.toStringAsFixed(2)} chg%=${changePercent.toStringAsFixed(2)}',
+        );
+      }
       yield base.copyWith(
         lastPrice: nextPrice,
         change: change,
-        changePercent: base.close == 0 ? 0 : (change / base.close) * 100,
+        changePercent: changePercent,
       );
       tick++;
     }
@@ -64,12 +151,23 @@ class StockService {
 
   StockIndex? _parseIndexUpdate(String message, List<StockIndex> indices) {
     final parts = message.split('|');
+    if (kDebugMode) {
+      print("Received message: $message");
+      print("Received indices: $indices");
+    }
     if (parts.length < 8) return null;
-    final feedPrefix = parts.first;
-    final name = parts[1].replaceAll(RegExp(r'[^A-Za-z0-9 ]'), '').trim();
+    // message format: PROVIDER|ID|lastPrice|high|low|open|close|percent|...
+    final provider = parts[0];
+    final id = parts[1];
+    final feedSymbol = '${provider}_$id';
+    final name = parts.length > 1
+        ? parts[1].replaceAll(RegExp(r'[^A-Za-z0-9 ]'), '').trim()
+        : '';
+
     final matching = indices.where((index) {
       final comparable = index.symbol.replaceAll(' ', '').toLowerCase();
-      return index.feedSymbol.startsWith(feedPrefix) ||
+      return index.feedSymbol == feedSymbol ||
+          index.feedSymbol.startsWith(provider) ||
           comparable.contains(name.replaceAll(' ', '').toLowerCase());
     }).firstOrNull;
     if (matching == null) return null;
