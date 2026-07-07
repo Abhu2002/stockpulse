@@ -63,13 +63,7 @@ class StockService {
 
     try {
       // Prefer subscribing to key indices; include 26060 as requested.
-      const preferredFeeds = {'NSEIDX_26000', 'NSEIDX_26060'};
-      final symbols = currentIndices
-          .where((index) => preferredFeeds.contains(index.feedSymbol))
-          .map((index) => index.feedSymbol)
-          .toList();
-      // If no preferred symbols found, fall back to subscribing to 26060 specifically.
-      final subs = symbols.isEmpty ? ['NSEIDX_26060'] : symbols;
+      const subs = ['NSEIDX_26000', 'NSEIDX_26060'];
       if (kDebugMode) {
         print('LIVE: Subscribing to symbols: $subs');
       }
@@ -160,17 +154,15 @@ class StockService {
     final provider = parts[0];
     final id = parts[1];
     final feedSymbol = '${provider}_$id';
-    final name = parts.length > 1
-        ? parts[1].replaceAll(RegExp(r'[^A-Za-z0-9 ]'), '').trim()
-        : '';
 
-    final matching = indices.where((index) {
-      final comparable = index.symbol.replaceAll(' ', '').toLowerCase();
-      return index.feedSymbol == feedSymbol ||
-          index.feedSymbol.startsWith(provider) ||
-          comparable.contains(name.replaceAll(' ', '').toLowerCase());
-    }).firstOrNull;
-    if (matching == null) return null;
+    final matches = indices.where((index) => index.feedSymbol == feedSymbol);
+    if (matches.isEmpty) {
+      if (kDebugMode) {
+        print('LIVE: Message feed symbol not recognized: $feedSymbol');
+      }
+      return null;
+    }
+    final matching = matches.first;
 
     final lastPrice = double.tryParse(parts[2]) ?? matching.lastPrice;
     final high = double.tryParse(parts[3]) ?? matching.high;
